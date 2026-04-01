@@ -39,10 +39,11 @@ async def stream_chat(request: StreamRequest):
     # 4. Return FastAPI's StreamingResponse
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-
 @router.get("/chat-ui", response_class=HTMLResponse)
 async def get_chat_ui():
-    return """
+    # Notice the 'r' before the quotes! This makes it a Python raw string, 
+    # preventing it from messing with our Javascript escape sequences.
+    return r"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -61,67 +62,81 @@ async def get_chat_ui():
         <h2>Project 2: Streaming Chat ⚡</h2>
         <div id="chat-box"></div>
         <div style="display: flex; gap: 10px;">
-            <input type="text" id="msg-input" placeholder="Ask me to write a poem..." onkeypress="if(event.key === 'Enter') send()">
-            <button onclick="send()">Send</button>
+            <input type="text" id="msg-input" placeholder="Ask me to write a poem..." onkeypress="if(event.key === 'Enter') sendMsg()">
+            <button onclick="sendMsg()">Send</button>
         </div>
 
         <script>
-            async function send() {
+            async function sendMsg() {
                 const input = document.getElementById('msg-input');
                 const chatBox = document.getElementById('chat-box');
-                const msg = input.value;
+                const msg = input.value.trim();
                 if (!msg) return;
                 
-                // Clear input and add user message
                 input.value = '';
                 chatBox.innerHTML += `<div style="color: #67e8f9; margin-bottom: 10px;">> ${msg}</div>`;
                 
-                // Create a container for the AI's streaming response
                 const aiResponseDiv = document.createElement('div');
                 aiResponseDiv.style.color = '#a78bfa';
                 aiResponseDiv.style.marginBottom = '20px';
                 chatBox.appendChild(aiResponseDiv);
 
                 try {
-                    // Fetch the stream (POST request)
                     const response = await fetch('/p02/stream', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message: msg })
                     });
 
-                    // Set up the reader to read the stream piece by piece
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
+                    let buffer = '';
 
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
 
-                        // Decode the chunk (Uint8Array to String)
-                        const chunk = decoder.decode(value, { stream: true });
+                        buffer += decoder.decode(value, { stream: true });
                         
-                        // Parse the SSE "data: ..." format
-                        const lines = chunk.split('\\n');
-                        for (let line of lines) {
-                            if (line.startsWith('data: ')) {
-                                const dataStr = line.slice(6);
-                                if (dataStr === '[DONE]') return; // Stream finished
+                        // Using JS Regex (/\n\n/) avoids Python string escaping issues entirely!
+                        const events = buffer.split(/\n\n/);
+                        
+                        buffer = events.pop(); 
+
+                        for (let event of events) {
+                            if (event.startsWith('data: ')) {
+                                const dataStr = event.slice(6);
+                                if (dataStr === '[DONE]') return;
                                 
                                 try {
                                     const parsed = JSON.parse(dataStr);
-                                    // Append text to the div
-                                    aiResponseDiv.innerHTML += `<span class="token">${parsed.text}</span>`;
-                                } catch (e) { console.error("Error parsing JSON chunk", e); }
+                                    
+                                    const span = document.createElement('span');
+                                    span.className = 'token';
+                                    span.textContent = parsed.text;
+                                    
+                                    aiResponseDiv.appendChild(span);
+                                    
+                                } catch (e) { 
+                                    console.error("Error parsing JSON chunk", e, "Data:", dataStr); 
+                                }
                             }
                         }
                     }
                 } catch (err) {
                     console.error("Stream failed", err);
-                    aiResponseDiv.innerHTML += `<br><span style="color: red;">Error connecting to stream.</span>`;
+                    aiResponseDiv.appendChild(document.createElement('br'));
+                    const errSpan = document.createElement('span');
+                    errSpan.style.color = '#ef4444';
+                    errSpan.textContent = "Error connecting to stream.";
+                    aiResponseDiv.appendChild(errSpan);
                 }
             }
         </script>
     </body>
     </html>
-    """
+ """
