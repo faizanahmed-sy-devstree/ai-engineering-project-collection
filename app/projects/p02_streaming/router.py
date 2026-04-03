@@ -21,7 +21,7 @@ async def stream_chat(request: StreamRequest):
     async def event_generator():
         # 1. Use the new SDK's async client (.aio) and stream method
         response = await client.aio.models.generate_content_stream(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-flash-lite",
             contents=request.message
         )
         
